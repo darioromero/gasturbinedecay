@@ -1,0 +1,330 @@
+---
+title: "Ship Propulsion Systems - Gas Turbine Compressor Decay State Coefficient Prediction"
+output: html_document
+objective: applicability for type of equipments across Oil & Gas (upstream, midstream and downstream), Mining, Chemicals, Power and Utilities
+---
+
+The behavior and interaction of the main components of Ship Propulsion Systems cannot be easily modeled with an a-priori physical knowledge, considering the large amount of variables influencing them. 
+
+Instead, data-driven Models (DDMs) in conjuntion with advanced statistical techniques are more useful to build models directly on the large amount of historical data collected by the modern on-board automation systems, without requiring any a-priori knowledge. 
+
+DDMs are extremely useful when it comes to continuously monitor the propulsion equipments to avoid Preventive or Corrective Maintenance and take decisions based on the actual condition of the propulsion plant, but unfortunately, this can only be done at the expense of a much larger amount of data to achieve satisfying performances. 
+
+Today sensor's data are cheap and easy to collect, however, label them with the actual state of decay of a component can be quite expensive and in some cases unfeasible or impractical given the huge amount of streaming data. This data stream is usually present at a very high frequency levels in real-time, in batches, or at the very least in offline mode.
+
+The advent of more sophisticaded algorithms in deep neural networks, the progressive use of sound statistical techniques like Bayesian Neural Networks, Extreme Gradient Boosting, and Ensembles of Models, and the increasing gain in processing speed and high computing power is making the path for obtaining more insights on data at hand. Today is common practice in many industries to provide predictive and prescriptive knowledge for extending the life-of-use and dealing with equipment failures in a more efficient manner.
+
+```{r}
+# setwd("D:/OneDrive/Noah/XOM NIA Evaluation/RAnalysis/gasturbinedecay")
+setwd("/home/drome/rprojects/gasturbinedecay")
+```
+
+### Importing libraries
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(stringr)
+library(stringi)
+library(rattle)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(knitr)
+library(caret)
+library(AppliedPredictiveModeling)
+library(corrplot)
+library(FactoMineR)
+library(factoextra)
+```
+
+### Reading data - 30 attributes and 590K+ observations
+
+```{r}
+
+ds = read.csv("./data/data_new.txt", header = F, sep = '\t', colClasses = "numeric")
+headers = read.csv("./data/features_new.txt", header = T, sep = '\t', colClasses = "character")
+headers <- c(names(headers))
+headers <- sapply(headers, function(x) str_replace(str_replace_all(x, "[.]{1,}", "_"), "[_]$", ""))
+
+## "Lever_lp", "Speed_knots", "Gas_Turbine_shaft_torque_GTT_kN_m","Gas_Turbine_Speed_GT_rpm_rpm",
+## "Controllable_Pitch_Propeller_Thrust_stbd_N", "Controllable_Pitch_Propeller_Thrust_port_N", "Shaft_Torque_port_kN",
+## "Shaft_rpm_port_rpm", "Shaft_Torque_stbd_Q_stdb_kN", "Shaft_rpm_stbd_rpm", "HP_Turbine_exit_temperature_T48_C",
+## "Generator_of_Gas_speed_GG_rpm_rpm", "Fuel_flow_mf_kg_s", "ABB_Tic_control_signal",
+## "GT_Compressor_outlet_air_pressure_P2_bar", "GT_Compressor_outlet_air_temperature_T2_C",
+## "External_Pressure_Pext_bar", "HP_Turbine_exit_pressure_P48_bar", "TCS_tic_control_signal",
+## "Thrust_coefficient_stbd", "Propeller_rps_stbd_rps", "Thrust_coefficient_port", "Propeller_rps_port_rps",
+## "Propeller_Torque_port_Nm", "Propeller_Torque_stbd_Nm", "Propeller_Thrust_decay_state_coefficient_Kkt",
+## "Propeller_Torque_decay_state_coefficient_Kkq", "Hull_decay_state_coefficient_Khull",
+## "GT_Compressor_decay_state_coefficient_KMcompr" "GT_Turbine_decay_state_coefficient_KMturb"
+
+bag_of_headers <- function(x) {
+  full_bag <- c()
+  for (i in seq_along(x)) full_bag <- c(full_bag, x[[i]])
+  return(full_bag)
+}
+
+names(ds) <- bag_of_headers(headers)
+names_short <- c("lever", "speed", "gt_shaft_tq", "gt_speed", "cpp_th", "cpp_tn", "shaft_tq_pt", "shaft_rpm_pt", "shaft_tq_Q", "shaft_rpm_stbd", "hp_turb_ex_T", "gg_speed", "ff_mf", "abb_Tic", "gt_cmpr_outP", "gt_cmpr_outT", "pext_bar", "hp_turb_outP", "tcs_signal", "th_coef_st", "prop_rps", "th_coef_pt", "prop_rps_pt", "prop_tq_pt", "prop_tq_st", "prop_th_dcy", "prop_tq_dcy", "hull_dcy", "gt_cmpr_dcy", "gt_turb_dcy")
+names(ds) <- names_short
+
+```
+
+### Saving new reformatted dataset to disk
+
+```{r}
+
+# Dropping dependent variable for calculating Multicollinearity on predictors
+dep_var <- "gt_cmpr_dcy"
+dssub <- subset(ds, select = -which(colnames(ds) %in% dep_var))
+
+# write.csv(x = ds, file = "./data/decay_state.csv", row.names = FALSE)
+# saveRDS(object = ds, file = "./data/dsRDS.RDS")
+
+```
+
+In using Linear Regression for solving a problem like this we need to meet certain conditions
+
+Assumptions of Linear Regression Analysis 
+
+1. Linear Relationship: Linear regression needs a linear relationship between the dependent and independent variables.
+
+2. Normality of Residual: Linear regression requires residuals should be normally distributed.
+
+3. Homoscedasticity:  Linear regression assumes that residuals are approximately equal for all predicted dependent variable values. In other words, it means constant variance of errors.
+
+4. No Outlier Problem
+
+5. Multicollinearity: It means there is a high correlation between independent variables. The linear regression model MUST NOT be faced with problem of multicollinearity.
+
+6. Independence of error terms - No Autocorrelation: It states that the errors associated with one observation are not correlated with the errors of any other observation. It is a problem when you use time series data.
+
+
+### Analyzing and Filtering data with possibly Near Zero Variance
+
+```{r}
+
+# Selecting columns with near zero variance
+nzv_ds <- nearZeroVar(dssub)
+
+ds_nzv <- dssub[, -nzv_ds]
+
+```
+
+### Identifying and Reviewing predictors which are highly or perfectly correlated
+
+```{r fig.height=8, fig.width=10}
+
+# Calculating Correlation: is used to investigate the dependence between multiple variables at the same time
+ds_Cor <- cor(ds_nzv)
+
+# Print correlation matrix and look at max correlation
+print(head(ds_Cor))
+
+# color maps
+col1 <- colorRampPalette(c("#7F0000","red","#FF7F00","yellow","white", 
+        "cyan", "#007FFF", "blue","#00007F"))
+col2 <- colorRampPalette(c("#67001F", "#B2182B", "#D6604D", "#F4A582", "#FDDBC7",
+            "#FFFFFF", "#D1E5F0", "#92C5DE", "#4393C3", "#2166AC", "#053061"))  
+col3 <- colorRampPalette(c("red", "white", "blue")) 
+col4 <- colorRampPalette(c("#7F0000","red","#FF7F00","yellow","#7FFF7F", 
+            "cyan", "#007FFF", "blue","#00007F"))
+
+# Combine with significance test
+cor.mtest <- function(mat, conf.level = 0.95){
+  mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+    for(i in 1:(n-1)){
+        for(j in (i+1):n){
+            tmp <- cor.test(mat[,i], mat[,j], conf.level = conf.level)
+            p.mat[i,j] <- p.mat[j,i] <- tmp$p.value
+            lowCI.mat[i,j] <- lowCI.mat[j,i] <- tmp$conf.int[1]
+            uppCI.mat[i,j] <- uppCI.mat[j,i] <- tmp$conf.int[2]
+        }
+    }
+    return(list(p.mat, lowCI.mat, uppCI.mat))
+}
+
+res1 <- cor.mtest(ds_Cor, 0.95)
+res2 <- cor.mtest(ds_Cor, 0.99)
+
+corrplot(ds_Cor, p.mat = res1[[1]], order="hclust", addrect=3, 
+         insig = "pch", pch.cex = 1, pch.col = "red", 
+         col=col4(16), cl.pos="b", cl.cex = 1, 
+         tl.srt=60, tl.col = "blue")
+```
+
+### Algorithm to flag predictors for removal
+
+```{r}
+
+print(paste0("There are ", sum(abs(ds_Cor[upper.tri(ds_Cor)]) > .999), " predictors almost perfectly correlated."))
+summary(ds_Cor[upper.tri(ds_Cor)])
+
+# The code chunk below shows the effect of removing descriptors with absolute correlations above 0.70
+dsHighlyCor <- findCorrelation(ds_Cor, cutoff = .70)
+dsHighlyCorCol <- colnames(ds_Cor)[dsHighlyCor]
+
+# Print highly correlated attributes
+print(dsHighlyCorCol)
+
+#Remove highly correlated variables and create a new dataset
+ds_nhc = ds_nzv[, -which(colnames(ds_nzv) %in% dsHighlyCorCol)]
+dim(ds_nhc)
+
+ds_nhc_Cor <- cor(ds_nhc)
+summary(ds_nhc[upper.tri(ds_nhc_Cor)])
+
+# The following list is statistically significant:
+bag_of_headers(headers)[which(names_short %in% colnames(ds_nhc))]
+# For the dependent variable:
+bag_of_headers(headers)[which(colnames(ds) %in% dep_var)]
+
+```
+
+### Using the function findLinearCombos
+
+```{r}
+# The function findLinearCombos uses the QR decomposition of a matrix to enumerate sets of linear combinations (if they exist)
+comboInfo <- findLinearCombos(ds_nhc)
+
+print(paste0("There are ", length(comboInfo$remove), " columns: [", comboInfo$remove, "] with linear combination"))
+
+if (length(comboInfo$remove) != 0) ds_nhc[, -comboInfo$remove]
+
+```
+
+### Transforming the dataset to a tibble
+
+```{r}
+
+# as_tibble is a new S3 generic with more efficient methods for matrices and data frames.
+ds_nhc <- as_tibble(ds_nhc)
+head(ds_nhc) # first rows of the new compressor decay state non-highly correlated dataset
+
+```
+
+
+Now we know that only four columns out of 29 have non-near zero variance and are linearly independent between them.
+But after doing all that homework by hand and step by step I decided to try the function preProcess from the excellent package AppliedPredictiveModeling from Max Khun.
+In doing so I found myself with a sense of having done the porevious work fairly correct. The function preProcess takes care of many things at one shot. After applyting it to the original dataset I found that these results are telling me that those 6 variables are responsible for 95% of the variance.
+Then, those six variables [$"gg_speed"$, "tcs_signal", "th_coef_pt", "prop_tq_dcy", "hull_dcy", "gt_turb_dcy"] are the ones we will use for the rest of the analysis. We are going to step into Normalizing and establising the Neural Net for Regression Analysis using Tensorflow.
+
+### Function to plot all required graphs for PCA results
+
+```{r}
+
+pcaCharts <- function(x) {
+  x.var <- x$std ^ 2
+  x.pvar <- x.var / sum(x.var)
+  print("proportions of variance:")
+  print(x.pvar)
+  
+  par(mfrow = c(2, 2))
+  plot(
+  x.pvar,
+  xlab = "Principal component",
+  ylab = "Proportion of variance explained",
+  ylim = c(0, 1),
+  type = 'b'
+  )
+  plot(
+  cumsum(x.pvar),
+  xlab = "Principal component",
+  ylab = "Cumulative Proportion of variance explained",
+  ylim = c(0, 1),
+  type = 'b'
+  )
+  screeplot(x)
+  screeplot(x, type = "l")
+  par(mfrow = c(1, 1))
+}
+
+```
+
+### Applying PCA Analysis using preProcess (caret package)
+
+```{r}
+
+# Using preProcess without the target variable "Gas Turbine Compressor state Decay"
+dsPCA <- preProcess(ds[,-29], method = c("BoxCox", "corr", "nzv", "pca"))
+dsPCA
+names(dsPCA$mean)
+mu <- dsPCA$mean
+sd <- dsPCA$std
+mu
+sd
+
+# compute variance
+pr_var <- sd^2 
+pr_var
+
+pcaCharts(dsPCA)
+
+
+```
+
+### Building Train, and Test sets
+
+```{r}
+
+set.seed(123)
+inTrainPercent <- 0.9
+inTrain <- sample(1:length(ds[, which(colnames(ds) %in% dep_var)]))[1:floor(length(ds[, which(colnames(ds) %in% dep_var)])*inTrainPercent)]
+Xtrain <- ds[inTrain, names(dsPCA$mean)]
+Xtest <- ds[-inTrain, names(dsPCA$mean)]
+ytrain <- ds[inTrain, which(colnames(ds) %in% dep_var)]
+ytest <- ds[-inTrain, which(colnames(ds) %in% dep_var)]
+
+
+XtrainTransformed <- predict(dsPCA, Xtrain)
+XtestTransformed <- predict(dsPCA, Xtest)
+
+```
+
+***
+
+### References
+
+1. [Visualize correlation matrix using correlogram](http://www.sthda.com/english/wiki/visualize-correlation-matrix-using-correlogram) 
+2. [Correlation matrix : A quick start guide to analyze, format and visualize a correlation matrix using R software](http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software) 
+3. [Checking Assumptions of Multiple Regression with SAS](http://www.listendata.com/2015/03/checking-assumptions-of-regression.html) 
+4. [Linear Regression in R](http://www.listendata.com/2015/09/linear-regression-with-r.html) 
+5. [The caret package](http://topepo.github.io/caret/index.html) 
+6. [Condition Based Maintenance of Naval Propulsion Systems - Downloads](https://sites.google.com/view/cbm/home)
+7. [StackOverflow](https://stackoverflow.com/)
+8. [R Documentation - A Visualization Of A Correlation Matrix](https://www.rdocumentation.org/packages/corrplot/versions/0.77/topics/corrplot)
+9. [Applied Predictive Modeling - Max Khun, Kjell Johnson](http://appliedpredictivemodeling.com/)
+10. [The R interface to TensorFlow](https://tensorflow.rstudio.com/)
+11. [Gentlest Intro to TensorFlow #3: Matrices & Multi-feature Linear Regression](https://medium.com/all-of-us-are-belong-to-machines/gentlest-intro-to-tensorflow-part-3-matrices-multi-feature-linear-regression-30a81ebaaa6c)
+12. [Linear Regression with NumPy](https://www.cs.toronto.edu/~frossard/post/linear_regression/)
+13. [Sandbox to test regular expression](http://www.myregexp.com/)
+14. [TensorFlow's Visualization Toolkit](https://github.com/tensorflow/tensorboard)
+15. [In-depth introduction to machine learning in 15 hours of expert videos](https://www.r-bloggers.com/in-depth-introduction-to-machine-learning-in-15-hours-of-expert-videos/)
+
+In statistics, a generalized additive model (GAM) is a **generalized linear model** in which the linear predictor depends linearly on unknown smooth functions of some predictor variables, and interest focuses on inference about these smooth functions. GAMs were originally developed by Trevor Hastie and Robert Tibshirani[1] to blend properties of generalized linear models with additive models.
+
+The model relates a univariate response variable, $Y$, to some predictor variables, $x_i$. An **exponential family** distribution is specified for $Y$ (for example **normal**, **binomial** or **Poisson** distributions) along with a **link function** g (for example the identity or log functions) relating the expected value of $Y$ to the predictor variables via a structure such as:
+
+$$g(E(Y)) = \beta_0 + f_1(x_1) + f_2(x_2) + ... + f_m(x_m) $$
+
+The functions $f_i$ may be functions with a specified parametric form (for example a polynomial, or a spline depending on the levels of a factor variable) or may be specified non-parametrically, or semi-parametrically, simply as **'smooth functions'**, to be estimated by non-parametric means. So a typical GAM might use a scatterplot smoothing function, such as a locally weighted mean, for $f_1(x_1)$, and then use a factor model for $f_2(x_2)$. This flexibility to allow non-parametric fits with relaxed assumptions on the actual relationship between response and predictor, provides the potential for better fits to data than purely parametric models, but arguably with some loss of interpretability. [Generalized additive model. Wikipedia](https://en.wikipedia.org/wiki/Generalized_additive_model)
+
+
+
+```{r}
+
+print("End of the game")
+
+```
+
+***
+
+
+
+
+
+
+

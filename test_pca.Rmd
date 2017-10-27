@@ -1,0 +1,228 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+```
+
+```{r}
+data(decathlon2)
+head(decathlon2)
+```
+
+```{r}
+decathlon2.active <- decathlon2[1:23, 1:10]
+head(decathlon2.active[, 1:6], 4)
+```
+
+```{r}
+
+res.pca <- PCA(decathlon2.active, graph = FALSE)
+print(res.pca)
+
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+str(eig.val)
+sum(eig.val[1:10])
+eig.val[,3]
+
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+
+var <- get_pca_var(res.pca)
+var
+
+# The different components can be accessed as follow:
+
+# Coordinates
+head(var$coord)
+# Cos2: quality on the factore map
+head(var$cos2)
+# Contributions to the principal components
+head(var$contrib)
+
+# Coordinates of variables
+head(var$coord, 4)
+
+# To plot variables, type this:
+fviz_pca_var(res.pca, col.var = "black")
+
+# The quality of representation of the variables on factor map is called 
+# cos2 (square cosine, squared coordinates)
+
+head(var$cos2, 4)
+
+# You can visualize the cos2 of variables on all the dimensions using the corrplot package
+library("corrplot")
+corrplot(var$cos2, is.corr=FALSE)
+
+# It’s also possible to create a bar plot of variables cos2 using the function 
+# fviz_cos2()[in factoextra]
+# Total cos2 of variables on Dim.1 and Dim.2
+fviz_cos2(res.pca, choice = "var", axes = 1:2)
+
+# Color by cos2 values: quality on the factor map
+fviz_pca_var(res.pca, col.var = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE # Avoid text overlapping
+             )
+
+# Change the transparency by cos2 values
+fviz_pca_var(res.pca, alpha.var = "cos2")
+
+# The contribution of variables can be extracted as follow :
+head(var$contrib, 4)
+
+library("corrplot")
+corrplot(var$contrib, is.corr=FALSE)
+
+
+# Contributions of variables to PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+# Contributions of variables to PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+
+# The total contribution to PC1 and PC2 is obtained with the following R code:
+# The red dashed line on the graph above indicates the expected average contribution.
+fviz_contrib(res.pca, choice = "var", axes = 1:2, top = 10)
+
+# The most important (or, contributing) variables can be highlighted on the 
+# correlation plot as follow:
+fviz_pca_var(res.pca, col.var = "contrib", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+
+# Change the transparency by contrib values
+fviz_pca_var(res.pca, alpha.var = "contrib")
+
+# Create a random continuous variable of length 10
+set.seed(123)
+my.cont.var <- rnorm(10)
+
+# Color variables by the continuous variable
+fviz_pca_var(res.pca, col.var = my.cont.var, gradient.cols = c("blue", "yellow", "red"), 
+             legend.title = "Cont.Var")
+
+
+# Create a grouping variable using kmeans
+# Create 3 groups of variables (centers = 3)
+set.seed(123)
+res.km <- kmeans(var$coord, centers = 3, nstart = 25)
+grp <- as.factor(res.km$cluster)
+
+# Color variables by groups
+fviz_pca_var(res.pca, col.var = grp, palette = c("#0073C2FF", "#EFC000FF", "#868686FF"), 
+             legend.title = "Cluster")
+
+
+res.desc <- dimdesc(res.pca, axes = c(1,2), proba = 0.05)
+# Description of dimension 1
+res.desc$Dim.1
+
+# Description of dimension 2
+res.desc$Dim.2
+
+
+ind <- get_pca_ind(res.pca)
+ind
+
+# Coordinates of individuals
+head(ind$coord)
+
+# Quality of individuals
+head(ind$cos2)
+
+# Contributions of individuals
+head(ind$contrib)
+
+fviz_pca_ind(res.pca)
+
+fviz_pca_ind(res.pca, col.ind = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+
+
+fviz_pca_ind(res.pca, pointsize = "cos2", pointshape = 21, fill = "#E7B800", 
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+
+
+fviz_pca_ind(res.pca, col.ind = "cos2", pointsize = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+
+
+fviz_cos2(res.pca, choice = "ind")
+
+# Total contribution on PC1 and PC2
+fviz_contrib(res.pca, choice = "ind", axes = 1:2)
+
+
+# Create a random continuous variable of length 23,
+# Same length as the number of active individuals in the PCA
+set.seed(123)
+my.cont.var <- rnorm(23)
+# Color variables by the continuous variable
+fviz_pca_ind(res.pca, col.ind = my.cont.var, gradient.cols = c("blue", "yellow", "red"), 
+             legend.title = "Cont.Var")
+
+```
+
+
+```{r}
+
+head(iris, 3)
+
+# The variable Species (index = 5) is removed
+# before PCA analysis
+iris.pca <- PCA(iris[,-5], graph = FALSE)
+
+fviz_pca_ind(iris.pca, 
+             geom.ind = "point", # show points only (nbut not "text") 
+             col.ind = iris$Species, # color by groups 
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             addEllipses = TRUE, # Concentration ellipses 
+             legend.title = "Groups" 
+             )
+
+
+# Add confidence ellipses
+fviz_pca_ind(iris.pca, geom.ind = "point", col.ind = iris$Species, 
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             addEllipses = TRUE, ellipse.type = "confidence", 
+             legend.title = "Groups"
+             )
+
+
+# For example, to use the jco (journal of clinical oncology) color palette, type this:
+fviz_pca_ind(iris.pca, 
+             label = "none", # hide individual labels 
+             habillage = iris$Species, # color by groups 
+             addEllipses = TRUE, # Concentration ellipses 
+             palette = "jco" 
+             )
+
+# 3.4.5 Graph customization (standby for now)
+
+
+
+```
+
+
